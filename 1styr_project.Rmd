@@ -14,5 +14,42 @@ output:
 
 ## Load Dataset & Explore
 ```{r setup, eval=T, echo=T, warning=T, message=T, cache=F}
-library(dyplr)
+rm(list=ls());
+library(tidyverse) #load package
+
+data.in.path <- "C:/Users/11091/OneDrive - University of Southern California/Research/CARLab/data/" #path for self compiled demographics
+cog.in.path <- "Z:/CAR Study/Data/Databases/Examiner Summaries 2-2024/" #path for cognitive test data
+
+demo <-  read.csv(paste0(data.in.path, "demo.csv"))
+PGNG <- read.csv(paste0(data.in.path, "PGNG.csv"))
+EMA <-  read.csv(paste0(data.in.path, "CARS_pr_pst_EMA.csv"))
+flanker <- read.csv(paste0(cog.in.path, "compiled-flanker-data.csv"))
+nback <-  read.csv(paste0(cog.in.path, "compiled-nback-data.csv"))
+setshift <- read.csv(paste0(cog.in.path, "compiled-setshift-data.csv"))
+
+flanker.clean <- flanker[flanker$subject_id %in% demo$PID,] # only include the PIDs that are in the participant tracking sheet
+nback.clean <- nback[nback$subject_id %in% demo$PID,]
+setshift.clean <- setshift[setshift$subject_id %in% demo$PID,]
+
+unique(EMA$record_id_x)
+EMA$PID <- gsub("\\.0$", "", EMA$record_id_x)  # remove trailing ".0"
+EMA$PID <- gsub("[A-Za-z]$", "", EMA$PID)      # remove trailing letters
+unique(EMA$PID)
+```
+
+```{r datastr, eval=T, echo=T, warning=T, message=T, cache=F}
+#I need to set up what to use for NA PA rating too! Only when reporting regulation. Find out which variable is used.
+# Might need to look into mood induction & ERT behavioral later
+```
+
+
+```{r Troubleshoot, eval=T, echo=T, warning=T, message=T, cache=F}
+#Doing some PID cross checking. Determining what PID to use.
+EMA.clean <- EMA[EMA$PID %in% demo$PID,] 
+#why is 3940 not on the regular PID for demo? It's in UIC's inactive consented list.
+#What about 7013? same thing as 3940. Didn't complete the full study.
+#They both have EMA data and cog data but no MRI
+unique(EMA$PID)
+unique(EMA.clean$PID)
+unique(flanker$subject_id)
 ```
