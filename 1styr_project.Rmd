@@ -13,43 +13,213 @@ output:
 # 1st Year Project Analyses
 
 ## Load Dataset & Explore
-```{r setup, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r setup1, eval=T, echo=T, warning=T, message=T, cache=F}
 rm(list=ls());
-library(tidyverse) #load package
+library(tidyverse);library(psych);library(lme4); library(lmerTest); library(performance); #load package
 
-data.in.path <- "C:/Users/11091/OneDrive - University of Southern California/Research/CARLab/data/" #path for self compiled demographics
-cog.in.path <- "Z:/CAR Study/Data/Databases/Examiner Summaries 2-2024/" #path for cognitive test data
+data.in.path <- "C:/Users/11091/OneDrive - University of Southern California/Research/CARLab/data/Mengzhe/" #path for data
 
 demo <-  read.csv(paste0(data.in.path, "demo.csv"))
 PGNG <- read.csv(paste0(data.in.path, "PGNG.csv"))
 EMA <-  read.csv(paste0(data.in.path, "CARS_pr_pst_EMA.csv"))
-flanker <- read.csv(paste0(cog.in.path, "compiled-flanker-data.csv"))
-nback <-  read.csv(paste0(cog.in.path, "compiled-nback-data.csv"))
-setshift <- read.csv(paste0(cog.in.path, "compiled-setshift-data.csv"))
+flanker <- read.csv(paste0(data.in.path, "compiled-flanker-data.csv"))
+nback <-  read.csv(paste0(data.in.path, "compiled-nback-data.csv"))
+setshift <- read.csv(paste0(data.in.path, "compiled-setshift-data.csv"))
 
-flanker.clean <- flanker[flanker$subject_id %in% demo$PID,] # only include the PIDs that are in the participant tracking sheet
+flanker.clean <- flanker[flanker$subject_id %in% demo$PID,] # only include the PIDs that are in the demo
 nback.clean <- nback[nback$subject_id %in% demo$PID,]
 setshift.clean <- setshift[setshift$subject_id %in% demo$PID,]
 
+#Clean up EMA dataset
 unique(EMA$record_id_x)
 EMA$PID <- gsub("\\.0$", "", EMA$record_id_x)  # remove trailing ".0"
 EMA$PID <- gsub("[A-Za-z]$", "", EMA$PID)      # remove trailing letters
 unique(EMA$PID)
+
+# EMA.clean <- EMA[EMA$PID %in% demo$PID,]
+flanker.clean$subject_id <- as.character(flanker.clean$subject_id)
+
+#clean up demo dataset
+demo.clean<- demo %>%
+  mutate(
+    Race = trimws(Race),
+    Race = case_when(
+      Race %in% c("", NA,  "Unknown or not reported") ~ "Unknown or not reported",
+      Race %in% c("Black", "Black or African American", "Black/African American") ~ "Black/African American",
+      Race %in% c("More Than One Race", "More than one race", "Asain and White") ~ "More Than One Race",
+      TRUE ~ Race),
+    Ethnicity = trimws(Ethnicity),
+    Ethnicity = case_when(
+      Ethnicity %in% c("", NA) ~ "Unknown or not reported",
+      Ethnicity %in% c("Hispanic or Latinx", "Hispanic/Latino") ~ "Hispanic/Latinx",
+      Ethnicity %in% c("Not Hispanic or Latinx", "Not Hispanic/Latino", "Not Hispanic/Latinx") ~ "Not Hispanic/Latinx",
+      TRUE ~ Ethnicity))
+demo.clean$PID <- as.character(demo.clean$PID)
 ```
 
 ```{r datastr, eval=T, echo=T, warning=T, message=T, cache=F}
-#I need to set up what to use for NA PA rating too! Only when reporting regulation. Find out which variable is used.
+# Make a regulation YES/NO column, and NA PA aggregation
+# Here, I am unsure whether we are counting sers_reappraisal_pst (I reminded myself that difficult feelings won't last), dec_unpleasant_pst (I could observe unpleasant feelings without being drawn into them), dec_separate_pst (I could separate myself from my thoughts and feelings) as regulation. I thought they are which is why I included them here, but they are coded differently from the rest.  
+##### De-centering [not ER] dec_unpleasant_pst, dec_separate_pst
+EMA.clean <- EMA %>%
+  mutate(
+    ER_yes = if_else(
+      rowSums(across(
+        c(seri_distraction_pst, seri_reappraisal_pst, seri_acceptance_pst,
+          seri_distraction2_pst, seri_reappraisal2_pst, seri_acceptance2_pst,
+          sers_reappraisal_pst, dec_unpleasant_pst, dec_separate_pst),
+        ~ .x >= 2 & .x <= 10,
+        .names = "flag_{col}"
+      ), na.rm = TRUE) > 0,
+      1, 0), 
+    PA_pre = rowMeans(across(c(relaxed_pre, cheerful_pre, confident_pre, accepted_pre, happy_pre)),
+                      na.rm = TRUE),
+    NA_pre = rowMeans(across(c(sad_pre, frustrated_pre, angry_pre, stressed_pre, irritable_pre)),
+                      na.rm = TRUE),
+    PA_pst = rowMeans(across(c(relaxed_pst, cheerful_pst, confident_pst, accepted_pst, happy_pst)),
+                      na.rm = TRUE),
+    NA_pst = rowMeans(across(c(sad_pst, frustrated_pst, angry_pst, stressed_pst, irritable_pst)),
+                      na.rm = TRUE),
+    PA_pstpre = PA_pst - PA_pre,
+    NA_pstpre = NA_pst - NA_pre,
+  )
+table(EMA.clean$ER_yes)
+table(EMA.clean$pst_complete) #Remember to only include the ones that completed post
+describe(EMA.clean$sers_success_pst) #This is self rated success
+EMA.clean[,c("PID","PA_pre","NA_pre","PA_pst","NA_pst","PA_pstpre","NA_pstpre")]
+
+#Affect variability
+affect_sd <- EMA.clean %>%
+  group_by(PID) %>%
+  summarise(
+    NA_mean_pre = mean(NA_pre, na.rm = TRUE),
+    NA_mean_pst = mean(NA_pst, na.rm = TRUE),
+    PA_mean_pre = mean(PA_pre, na.rm = TRUE),
+    PA_mean_pst = mean(PA_pst, na.rm = TRUE),
+    NA_mean_merged =  mean(c(NA_pre, NA_pst), na.rm = TRUE),
+    PA_mean_merged =  mean(c(PA_pre, PA_pst), na.rm = TRUE),
+    NA_sd_pre = sd(NA_pre, na.rm = TRUE),
+    NA_sd_pst = sd(NA_pst, na.rm = TRUE),
+    NA_sd_merged = sd(c(NA_pre, NA_pst), na.rm = TRUE),
+    PA_sd_pre = sd(PA_pre, na.rm = TRUE),
+    PA_sd_pst = sd(PA_pst, na.rm = TRUE),
+    PA_sd_merged = sd(c(PA_pre, PA_pst), na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#Filtering out only the ones with pst data and indicated regulation
+EMA.clean.ER <- EMA.clean %>%
+  filter(ER_yes == 1, pst_complete == 2)
+
+#Over here, it only accounts for the prompts that have regulation! #Hmm, should I compare it to those that didn't report regulation?
+EMA.clean.ER.mean <- EMA.clean.ER %>%
+  group_by(PID) %>%
+  summarise(
+    ER_NA_mean_pstpre = mean(NA_pstpre, na.rm = TRUE),
+    ER_PA_mean_pstpre = mean(PA_pstpre, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+trait.level <- demo.clean %>% 
+  left_join(flanker.clean %>% select(subject_id, flanker_score), by = c("PID" = "subject_id")) %>%
+  left_join(setshift.clean %>% select(subject_id, shift_score), by = c("PID" = "subject_id")) %>%
+  left_join(EMA.clean.ER.mean, by = c("PID" = "PID")) %>%
+  left_join(affect_sd, by = c("PID" = "PID"))
+EMA.ER.all <- EMA.clean.ER %>% left_join (trait.level, by = c("PID" = "PID"))
 # Might need to look into mood induction & ERT behavioral later
 ```
 
+```{r demo, eval=T, echo=T, warning=T, message=T, cache=F}
+demo.clean %>%
+  group_by(Group) %>%
+  summarise(
+    total_count = n(),
+    perc = 100 * n() / nrow(demo.clean)
+  )
+demo.clean %>%
+  group_by(Gender) %>%
+  summarise(
+    total_count = n(),
+    perc = 100 * n() / nrow(demo.clean)
+  )
+describe(demo.clean$Age)
+demo.clean %>%
+  group_by(Race) %>%
+  summarise(
+    total_count = n(),
+    perc = 100 * n() / nrow(demo.clean)
+  )
+demo.clean %>%
+  group_by(Ethnicity) %>%
+  summarise(
+    total_count = n(),
+    perc = 100 * n() / nrow(demo.clean)
+  )
+demo.clean %>%
+  group_by(Site) %>%
+  summarise(
+    total_count = n(),
+    perc = 100 * n() / nrow(demo.clean)
+  )
+```
+
+```{r inhibitory_flexibility, eval=T, echo=T, warning=T, message=T, cache=F}
+fit.PA <- lmer(PA_pstpre ~ 1 + (1 | PID), data = EMA.ER.all) 
+model_performance(fit.PA) 
+# This ICC makes sense, 97.2% of variance is explained by within person. 
+##### Graph the distribution? Frequency distribution [one data point per participant].
+##### residual - raw PA score controlling for pre PA [person center prePA predicting pst PA].
+fitNA <- lmer(NA_pstpre ~ 1 + (1 | PID), data = EMA.ER.all)
+model_performance(fitNA) 
+# Between person variance is almost non-existent
+fitSuccess <- lmer(sers_success_pst ~ 1 + (1 | PID), data = EMA.ER.all)
+model_performance(fitSuccess)
+
+##### seperate within, between for sers_success
+summary(lmer(data = EMA.ER.all, PA_pstpre~sers_success_pst+ (1 | PID)))
+# Interestingly, perceived success does vary among individuals. ICC = 0.39, 61% of variance is explained by within person. 
+
+
+#MLM
+m.PA.flanker <- lmer(data = EMA.ER.all, PA_pstpre ~ flanker_score*Group + (1 | PID))
+summary(m.PA.flanker)
+m.NA.flanker <- lmer(data = EMA.ER.all, NA_pstpre ~ flanker_score*Group + (1 | PID))
+summary(m.NA.flanker)
+m.PA.ss <- lmer(data = EMA.ER.all, PA_pstpre ~ shift_score + Group + (1 | PID))
+summary(m.PA.ss)
+m.NA.ss <- lmer(data = EMA.ER.all, NA_pstpre ~ shift_score + Group + (1 | PID))
+summary(m.NA.ss)
+#Simple regression
+m.PA.flanker.simple <- lm(data = trait.level, ER_PA_mean_pstpre~flanker_score)
+summary(m.PA.flanker.simple)
+m.NA.flanker.simple <- lm(data = trait.level, ER_NA_mean_pstpre~flanker_score)
+summary(m.NA.flanker.simple)
+m.PA.SS.simple <- lm(data = trait.level, ER_PA_mean_pstpre~shift_score)
+summary(m.PA.SS.simple)
+m.NA.SS.simple <- lm(data = trait.level, ER_NA_mean_pstpre~shift_score)
+summary(m.NA.SS.simple)
+
+summary(lm(data = trait.level, flanker_score~shift_score))
+```
+
+```{r variability, eval=T, echo=T, warning=T, message=T, cache=F}
+summary(lm(data = trait.level, NA_mean_merged~Group)) #rMDD is associated with higher mean NA
+summary(lm(data = trait.level, PA_mean_merged~Group)) #rMDD is associated with lower mean PA
+summary(lm(data = trait.level, NA_sd_merged~Group)) #rMDD is associated with higher instability of NA
+summary(lm(data = trait.level, PA_sd_merged~Group)) #rMDD is associated with higher instability of PA
+summary(lm(data = trait.level, NA_sd_merged~Group+NA_mean_merged)) #rMDD is still marginally associated with higher instability of NA, accounting for mean level of NA
+summary(lm(data = trait.level, PA_sd_merged~Group+PA_mean_merged)) #rMDD is associated with higher instability of PA, accounting for mean level of PA
+
+#look at whether pre & merge correlate with each other
+```
 
 ```{r Troubleshoot, eval=T, echo=T, warning=T, message=T, cache=F}
 #Doing some PID cross checking. Determining what PID to use.
-EMA.clean <- EMA[EMA$PID %in% demo$PID,] 
+EMA.test <- EMA[EMA$PID %in% demo$PID,] 
 #why is 3940 not on the regular PID for demo? It's in UIC's inactive consented list.
 #What about 7013? same thing as 3940. Didn't complete the full study.
 #They both have EMA data and cog data but no MRI
 unique(EMA$PID)
-unique(EMA.clean$PID)
+unique(EMA.test$PID)
 unique(flanker$subject_id)
 ```
