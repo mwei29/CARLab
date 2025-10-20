@@ -211,6 +211,8 @@ summary(lm(data = trait.level, NA_sd_merged~Group+NA_mean_merged)) #rMDD is stil
 summary(lm(data = trait.level, PA_sd_merged~Group+PA_mean_merged)) #rMDD is associated with higher instability of PA, accounting for mean level of PA
 
 #look at whether pre & merge correlate with each other
+
+# I also wanna check cor between NA and affect variability, and obviously VIF?
 ```
 
 ```{r Troubleshoot, eval=T, echo=T, warning=T, message=T, cache=F}
