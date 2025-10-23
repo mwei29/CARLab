@@ -13,9 +13,9 @@ output:
 # 1st Year Project Analyses
 
 ## Load Dataset & Explore
-```{r setup1, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r setup1, eval=T, include=FALSE, warning=F, message=F, cache=F}
 rm(list=ls());
-library(tidyverse);library(psych);library(lme4); library(lmerTest); library(performance); #load package
+library(tidyverse);library(psych);library(lme4); library(lmerTest); library(performance); library(car) #load package
 
 data.in.path <- "C:/Users/11091/OneDrive - University of Southern California/Research/CARLab/data/Mengzhe/" #path for data
 
@@ -25,16 +25,17 @@ EMA <-  read.csv(paste0(data.in.path, "CARS_pr_pst_EMA.csv"))
 flanker <- read.csv(paste0(data.in.path, "compiled-flanker-data.csv"))
 nback <-  read.csv(paste0(data.in.path, "compiled-nback-data.csv"))
 setshift <- read.csv(paste0(data.in.path, "compiled-setshift-data.csv"))
+redcap <- read.csv(paste0(data.in.path, "REDCapV1a.csv"))
 
 flanker.clean <- flanker[flanker$subject_id %in% demo$PID,] # only include the PIDs that are in the demo
 nback.clean <- nback[nback$subject_id %in% demo$PID,]
 setshift.clean <- setshift[setshift$subject_id %in% demo$PID,]
+redcap.clean <- redcap[redcap$participant_id %in% demo$PID,]
 
 #Clean up EMA dataset
 unique(EMA$record_id_x)
 EMA$PID <- gsub("\\.0$", "", EMA$record_id_x)  # remove trailing ".0"
 EMA$PID <- gsub("[A-Za-z]$", "", EMA$PID)      # remove trailing letters
-unique(EMA$PID)
 
 # EMA.clean <- EMA[EMA$PID %in% demo$PID,]
 flanker.clean$subject_id <- as.character(flanker.clean$subject_id)
@@ -57,17 +58,17 @@ demo.clean<- demo %>%
 demo.clean$PID <- as.character(demo.clean$PID)
 ```
 
-```{r datastr, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r datastr, eval=T, include=FALSE, warning=F, message=F, cache=F}
 # Make a regulation YES/NO column, and NA PA aggregation
 # Here, I am unsure whether we are counting sers_reappraisal_pst (I reminded myself that difficult feelings won't last), dec_unpleasant_pst (I could observe unpleasant feelings without being drawn into them), dec_separate_pst (I could separate myself from my thoughts and feelings) as regulation. I thought they are which is why I included them here, but they are coded differently from the rest.  
-##### De-centering [not ER] dec_unpleasant_pst, dec_separate_pst
+##### JON: De-centering [not ER] dec_unpleasant_pst, dec_separate_pst; these two variables aren't part of the ER
 EMA.clean <- EMA %>%
   mutate(
     ER_yes = if_else(
       rowSums(across(
         c(seri_distraction_pst, seri_reappraisal_pst, seri_acceptance_pst,
           seri_distraction2_pst, seri_reappraisal2_pst, seri_acceptance2_pst,
-          sers_reappraisal_pst, dec_unpleasant_pst, dec_separate_pst),
+          sers_reappraisal_pst),
         ~ .x >= 2 & .x <= 10,
         .names = "flag_{col}"
       ), na.rm = TRUE) > 0,
@@ -82,10 +83,21 @@ EMA.clean <- EMA %>%
                       na.rm = TRUE),
     PA_pstpre = PA_pst - PA_pre,
     NA_pstpre = NA_pst - NA_pre,
-  )
-table(EMA.clean$ER_yes)
+    perceived_success = na_if(sers_success_pst, 0),  #0 is not applicable
+    perceived_success_gmc = scale(perceived_success, center = T, scale = F) #grand-mean centering
+  ) %>%
+  group_by(PID) %>%
+  mutate(
+    perceived_success_pm = mean(perceived_success,na.rm=TRUE), #person-mean
+    perceived_success_w = perceived_success - perceived_success_pm, #person-mean deviation: within-person variation
+    perceived_success_b = perceived_success_gmc - perceived_success_w,
+    PA_pre_w = PA_pre - mean(PA_pre,na.rm=TRUE),
+    NA_pre_w = NA_pre - mean(NA_pre,na.rm=TRUE)
+  ) %>%
+  ungroup()
+table(EMA.clean$ER_yes) #regulated around 48% of time
 table(EMA.clean$pst_complete) #Remember to only include the ones that completed post
-describe(EMA.clean$sers_success_pst) #This is self rated success
+describe(EMA.clean$perceived_success)
 EMA.clean[,c("PID","PA_pre","NA_pre","PA_pst","NA_pst","PA_pstpre","NA_pstpre")]
 
 #Affect variability
@@ -129,7 +141,7 @@ EMA.ER.all <- EMA.clean.ER %>% left_join (trait.level, by = c("PID" = "PID"))
 # Might need to look into mood induction & ERT behavioral later
 ```
 
-```{r demo, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r demo, eval=T, echo=T, warning=F, message=F, cache=F}
 demo.clean %>%
   group_by(Group) %>%
   summarise(
@@ -163,59 +175,305 @@ demo.clean %>%
   )
 ```
 
-```{r inhibitory_flexibility, eval=T, echo=T, warning=T, message=T, cache=F}
-fit.PA <- lmer(PA_pstpre ~ 1 + (1 | PID), data = EMA.ER.all) 
-model_performance(fit.PA) 
-# This ICC makes sense, 97.2% of variance is explained by within person. 
-##### Graph the distribution? Frequency distribution [one data point per participant].
-##### residual - raw PA score controlling for pre PA [person center prePA predicting pst PA].
+``` {r sub-levelAffectChange, eval=F,include=F}
+pdf("AffectChangePerPID.pdf", width = 10, height = 4)
+cols <- c("pre" = "steelblue", "pst" = "orange")
+for (pid in unique(EMA.ER.all$PID)) {
+  d <- EMA.ER.all[EMA.ER.all$PID == pid, ]
+  pa_vals <- as.vector(rbind(d$PA_pre, d$PA_pst))
+  na_vals <- as.vector(rbind(d$NA_pre, d$NA_pst))
+  conds <- rep(c("pre", "pst"), nrow(d))
+  x <- seq_along(pa_vals)
+ par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+  
+  # --- PA ---
+  plot(x, pa_vals, pch = 19, col = cols[conds],
+       xlab = "Prompt index", ylab = "PA", main = paste("PID", pid, "- PA"),
+       xaxt = "n", ylim = range(c(pa_vals, na_vals), na.rm = TRUE))
+  for (i in 1:nrow(d)) lines(c(2*i-1, 2*i), c(d$PA_pre[i], d$PA_pst[i]), col = "gray70")
+  legend("topleft", legend = names(cols), col = cols, pch = 19, bty = "n")
+  
+  # --- NA ---
+  plot(x, na_vals, pch = 19, col = cols[conds],
+       xlab = "Prompt index", ylab = "NA", main = paste("PID", pid, "- NA"),
+       xaxt = "n", ylim = range(c(pa_vals, na_vals), na.rm = TRUE))
+  for (i in 1:nrow(d)) lines(c(2*i-1, 2*i), c(d$NA_pre[i], d$NA_pst[i]), col = "gray70")
+  legend("topleft", legend = names(cols), col = cols, pch = 19, bty = "n")
+}
+
+dev.off()
+
+pdf("Pst-Pre_perPID.pdf", width = 10, height = 4)
+# pick global y-limits so panels are comparable across PIDs
+y_all <- c(EMA.ER.all$PA_pstpre, EMA.ER.all$NA_pstpre)
+yl <- range(y_all, na.rm = TRUE)
+# (optional) make symmetric around 0 for interpretability
+ylim_sym <- max(abs(yl), na.rm = TRUE)
+yl <- c(-ylim_sym, ylim_sym)
+
+for (pid in unique(EMA.ER.all$PID)) {
+  d <- EMA.ER.all[EMA.ER.all$PID == pid, , drop = FALSE]
+  if (!nrow(d)) next
+  
+  x_pa <- seq_along(d$PA_pstpre)
+  x_na <- seq_along(d$NA_pstpre)
+  
+  par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+  
+  # --- PA change ---
+  plot(x_pa, d$PA_pstpre, pch = 19, col = "steelblue",
+       xlab = "Prompt index", ylab = "PA (post - pre)",
+       main = paste("PID", pid, "- PA change"),
+       xaxt = "n", ylim = yl)
+  axis(1, at = x_pa, labels = x_pa, cex.axis = 0.8)
+  abline(h = 0, lty = 2, col = "gray60")
+  # (optional) connect sequential prompts:
+  lines(x_pa, d$PA_pstpre, col = adjustcolor("steelblue", 0.7))
+  
+  # --- NA change ---
+  plot(x_na, d$NA_pstpre, pch = 19, col = "tomato",
+       xlab = "Prompt index", ylab = "NA (post - pre)",
+       main = paste("PID", pid, "- NA change"),
+       xaxt = "n", ylim = yl)
+  axis(1, at = x_na, labels = x_na, cex.axis = 0.8)
+  abline(h = 0, lty = 2, col = "gray60")
+  lines(x_na, d$NA_pstpre, col = adjustcolor("tomato", 0.7))
+}
+
+dev.off()
+```
+
+```{r ERSuccess, eval=T, echo=T, warning=F, message=F, cache=F}
+##### RAW SCORE#####
+fitPA <- lmer(PA_pstpre ~ 1 + (1 | PID), data = EMA.ER.all) 
+model_performance(fitPA) 
+icc(fitPA)
+#97.2% of variance is explained by within person. 
 fitNA <- lmer(NA_pstpre ~ 1 + (1 | PID), data = EMA.ER.all)
 model_performance(fitNA) 
 # Between person variance is almost non-existent
-fitSuccess <- lmer(sers_success_pst ~ 1 + (1 | PID), data = EMA.ER.all)
+# Distribution, each dot is one participant's mean NA PA changes pst pre
+plot(EMA.clean.ER.mean$ER_PA_mean_pstpre)
+plot(EMA.clean.ER.mean$ER_NA_mean_pstpre)
+
+##### residual approach: how did the person feel compared to how they are expected to feel given their pre-PA/pre-NA.#####
+fit_resid <- lmer(PA_pst ~ PA_pre + (1|PID), data = EMA.ER.all)
+EMA.ER.all$PA_resid_change <- resid(fit_resid)
+fit_resid <- lmer(NA_pst ~ NA_pre + (1|PID), data = EMA.ER.all)
+EMA.ER.all$NA_resid_change <- resid(fit_resid)
+# Visualize
+ggplot(EMA.ER.all, aes(x = PA_pre, y = PA_pst)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_segment(aes(xend = PA_pre, yend = PA_pst - PA_resid_change),
+               alpha = 0.3) +
+  labs(x = "Pre-PA", y = "Post-PA",
+       title = "Residualized Emotion Regulation Success (PA_resid_change)")
+ggplot(EMA.ER.all, aes(x = NA_pre, y = NA_pst)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_segment(aes(xend = NA_pre, yend = NA_pst - NA_resid_change),
+               alpha = 0.3) +
+  labs(x = "Pre-NA", y = "Post-NA",
+       title = "Residualized Emotion Regulation Success (NA_resid_change)")
+
+#Check ICC, variance only explained by within person
+fitPA.res <- lmer(PA_resid_change ~ 1 + (1 | PID), data = EMA.ER.all) 
+model_performance(fitPA.res) 
+icc(fitPA.res)
+fitNA.res <- lmer(NA_resid_change ~ 1 + (1 | PID), data = EMA.ER.all)
+model_performance(fitNA.res) 
+
+##### residual approach 2: fit residual using centered affect variable: PA_pre_w and NA_pre_w#####
+fit_resid_w <- lmer(PA_pst ~ PA_pre_w + (1|PID), data = EMA.ER.all)
+EMA.ER.all$PA_resid_change_w <- resid(fit_resid_w)
+fit_resid_w <- lmer(NA_pst ~ NA_pre_w + (1|PID), data = EMA.ER.all)
+EMA.ER.all$NA_resid_change_w <- resid(fit_resid_w)
+# Visualize
+ggplot(EMA.ER.all, aes(x = PA_pre_w, y = PA_pst)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_segment(aes(xend = PA_pre_w, yend = PA_pst - PA_resid_change),
+               alpha = 0.3) +
+  labs(x = "Pre-PA (within)", y = "Post-PA",
+       title = "Residualized Emotion Regulation Success (PA_resid_change)")
+ggplot(EMA.ER.all, aes(x = NA_pre_w, y = NA_pst)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  geom_segment(aes(xend = NA_pre_w, yend = NA_pst - NA_resid_change),
+               alpha = 0.3) +
+  labs(x = "Pre-NA (within)", y = "Post-NA",
+       title = "Residualized Emotion Regulation Success (NA_resid_change)")
+
+#Check ICC, variance only explained by within person
+fitPA.res.w <- lmer(PA_resid_change_w ~ 1 + (1 | PID), data = EMA.ER.all) 
+model_performance(fitPA.res.w) 
+fitNA.res.w <- lmer(NA_resid_change_w ~ 1 + (1 | PID), data = EMA.ER.all)
+model_performance(fitNA.res.w) 
+
+#####SELF REPORTED PERCEIVED SUCCESS#####
+# ICC 0.46 for perceived success looks regular
+fitSuccess <- lmer(perceived_success ~ 1 + (1 | PID), data = EMA.ER.all)
 model_performance(fitSuccess)
 
-##### seperate within, between for sers_success
-summary(lmer(data = EMA.ER.all, PA_pstpre~sers_success_pst+ (1 | PID)))
-# Interestingly, perceived success does vary among individuals. ICC = 0.39, 61% of variance is explained by within person. 
+# Only within-person variation in perceived success is associated with PA residual changes. 
+summary(lmer(data = EMA.ER.all, PA_resid_change_w~perceived_success_w + perceived_success_b + (1 | PID)))
+# Only within-person variation in perceived success is associated with NA residual changes. 
+summary(lmer(data = EMA.ER.all, NA_resid_change_w~perceived_success_w + perceived_success_b + (1 | PID)))
+```
 
-
+```{r inhibitory_flexibility, eval=T, echo=T, warning=T, message=T, cache=F}
 #MLM
-m.PA.flanker <- lmer(data = EMA.ER.all, PA_pstpre ~ flanker_score*Group + (1 | PID))
+m.PA.flanker <- lmer(data = EMA.ER.all, PA_resid_change_w ~ flanker_score*Group + (1 | PID))
 summary(m.PA.flanker)
-m.NA.flanker <- lmer(data = EMA.ER.all, NA_pstpre ~ flanker_score*Group + (1 | PID))
+m.NA.flanker <- lmer(data = EMA.ER.all, NA_resid_change_w ~ flanker_score*Group + (1 | PID))
 summary(m.NA.flanker)
-m.PA.ss <- lmer(data = EMA.ER.all, PA_pstpre ~ shift_score + Group + (1 | PID))
+m.PA.ss <- lmer(data = EMA.ER.all, PA_resid_change_w ~ shift_score + Group + (1 | PID))
 summary(m.PA.ss)
-m.NA.ss <- lmer(data = EMA.ER.all, NA_pstpre ~ shift_score + Group + (1 | PID))
+m.NA.ss <- lmer(data = EMA.ER.all, NA_resid_change_w ~ shift_score + Group + (1 | PID))
 summary(m.NA.ss)
 #Simple regression
-m.PA.flanker.simple <- lm(data = trait.level, ER_PA_mean_pstpre~flanker_score)
+m.PA.flanker.simple <- lm(data = EMA.ER.all, PA_resid_change_w~flanker_score)
 summary(m.PA.flanker.simple)
-m.NA.flanker.simple <- lm(data = trait.level, ER_NA_mean_pstpre~flanker_score)
+m.NA.flanker.simple <- lm(data = EMA.ER.all, NA_resid_change_w~flanker_score)
 summary(m.NA.flanker.simple)
-m.PA.SS.simple <- lm(data = trait.level, ER_PA_mean_pstpre~shift_score)
+m.PA.SS.simple <- lm(data = EMA.ER.all, PA_resid_change_w~shift_score)
 summary(m.PA.SS.simple)
-m.NA.SS.simple <- lm(data = trait.level, ER_NA_mean_pstpre~shift_score)
+m.NA.SS.simple <- lm(data = EMA.ER.all, NA_resid_change_w~shift_score)
 summary(m.NA.SS.simple)
-
 summary(lm(data = trait.level, flanker_score~shift_score))
+
+# Trying another approach, this one might be better?
+m.PA.flanker.fluctuation<- lmer(PA_pst ~ PA_pre_w * flanker_score + (1|PID), data = EMA.ER.all)
+summary(m.PA.flanker.fluctuation)
+m.NA.flanker.fluctuation<- lmer(NA_pst ~ NA_pre_w * flanker_score + (1|PID), data = EMA.ER.all)
+summary(m.NA.flanker.fluctuation) #people with better inhibition may show more recovery from prior negative affect[marginally significant].
+m.PA.SS.fluctuation<- lmer(PA_pst ~ PA_pre_w * shift_score + (1|PID), data = EMA.ER.all)
+summary(m.PA.SS.fluctuation) # People with greater cognitive flexibility show a weaker coupling between pre- and post-PA
+m.NA.SS.fluctuation<- lmer(NA_pst ~ NA_pre_w * shift_score + (1+ NA_pre_w |PID), data = EMA.ER.all)
+summary(m.NA.SS.fluctuation) #people with greater cognitive flexibility may show more recovery from prior negative affect
+
+m.NA.SS.fluctuation<- lmer(NA_pst ~ NA_pre_w + (1|PID), data = EMA.ER.all)
+summary(m.NA.SS.fluctuation) 
+m.NA.SS.fluctuation1<- lmer(NA_pst ~ NA_pre_w + (1+ NA_pre_w |PID), data = EMA.ER.all)
+summary(m.NA.SS.fluctuation1) 
+anova(m.NA.SS.fluctuation,m.NA.SS.fluctuation1)
 ```
 
-```{r variability, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r variability, eval=T, echo=T, warning=F, message=F, cache=F}
 summary(lm(data = trait.level, NA_mean_merged~Group)) #rMDD is associated with higher mean NA
 summary(lm(data = trait.level, PA_mean_merged~Group)) #rMDD is associated with lower mean PA
+#####affect variability across all surveys
 summary(lm(data = trait.level, NA_sd_merged~Group)) #rMDD is associated with higher instability of NA
 summary(lm(data = trait.level, PA_sd_merged~Group)) #rMDD is associated with higher instability of PA
-summary(lm(data = trait.level, NA_sd_merged~Group+NA_mean_merged)) #rMDD is still marginally associated with higher instability of NA, accounting for mean level of NA
-summary(lm(data = trait.level, PA_sd_merged~Group+PA_mean_merged)) #rMDD is associated with higher instability of PA, accounting for mean level of PA
-
-#look at whether pre & merge correlate with each other
-
-# I also wanna check cor between NA and affect variability, and obviously VIF?
+m.NA <- lm(data = trait.level, NA_sd_merged~Group+NA_mean_merged) #rMDD is still marginally associated with higher instability of NA, accounting for mean level of NA
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level, PA_sd_merged~Group+PA_mean_merged) #rMDD is associated with higher instability of PA, accounting for mean level of PA
+summary(m.PA)
+vif(m.PA)
+#look at whether pre & merge correlate with each other; merged affect variability strongly correlate with both pre and pst sd
+cor(trait.level$NA_sd_merged, trait.level$NA_sd_pre, use = "complete.obs")
+cor(trait.level$NA_sd_merged, trait.level$NA_sd_pst, use = "complete.obs")
+cor(trait.level$PA_sd_merged, trait.level$PA_sd_pre, use = "complete.obs")
+cor(trait.level$PA_sd_merged, trait.level$PA_sd_pst, use = "complete.obs")
+# I also wanna check cor between NA and affect variability
+cor(trait.level$NA_sd_merged, trait.level$NA_mean_merged, use = "complete.obs") #0.73
+cor(trait.level$PA_sd_merged, trait.level$PA_mean_merged, use = "complete.obs") #-0.42
 ```
 
-```{r Troubleshoot, eval=T, echo=T, warning=T, message=T, cache=F}
+```{r psychopathology, eval=T, echo=T, warning=F, message=F, cache=F}
+#BDI-II: bdi_score
+#Beck Suicide Scale: bss_sisum; probably not worth looking at since there's not much variance
+#PSWQ: pswq_total
+#emotionrelated_impulsivity_eri: Positive Urgency: eri_pu_total; Reflexive Reactions to Feelings: eri_rrf_total; Feelings Trigger Action Factor: eri_ftaf_total; Generalization:eri_gen_total ; Emotions Color Worldview:eri_ecw_total
+#HAM-A: ham_a_score
+#HAM-D: hamd_sf_total
+vars <- c("bdi_score", 
+          "pswq_total",
+          "eri_pu_total", "eri_rrf_total", "eri_ftaf_total", "eri_gen_total", "eri_ecw_total",
+          "ham_a_score",
+          "hamd_sf_total")
+labels <- c("BDI-II Total",
+            "PSWQ Total (Worry)",
+            "ERI Positive Urgency", "ERI Reflexive Reactions to Feelings", "ERI Feelings Trigger Action", "ERI Generalization","ERI Emotions Color Worldview",
+            "HAM-A (Anxiety)",
+            "HAM-D (Depression)")
+describe(redcap.clean[vars])
+for (i in 1:length(vars)) {
+  v <- vars[i]
+  label <- labels[i]
+    d <- density(redcap.clean[[v]], na.rm = TRUE)
+    plot(d,
+         main = paste("Density of", label),
+         xlab = label,
+         ylab = "Density",
+         col = "darkblue",
+         lwd = 2)
+    polygon(d, col = adjustcolor("skyblue", alpha.f = 0.4), border = NA)
+}
+redcap.clean$participant_id <- as.character(redcap.clean$participant_id)
+trait.level.redcap <- trait.level %>%
+  left_join(redcap.clean, by = c("PID" = "participant_id"))
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$bdi_score, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$bdi_score, use = "complete.obs")
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$pswq_total, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$pswq_total, use = "complete.obs")
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$ham_a_score, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$ham_a_score, use = "complete.obs")
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$hamd_sf_total, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$hamd_sf_total, use = "complete.obs")
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$eri_gen_total, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$eri_gen_total, use = "complete.obs")
+cor(trait.level.redcap$NA_sd_merged, trait.level.redcap$eri_ecw_total, use = "complete.obs")
+cor(trait.level.redcap$PA_sd_merged, trait.level.redcap$eri_ecw_total, use = "complete.obs")
+
+m.NA <- lm(data = trait.level.redcap, bdi_score~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, bdi_score~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+m.NA <- lm(data = trait.level.redcap, pswq_total~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, pswq_total~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+m.NA <- lm(data = trait.level.redcap, ham_a_score~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, ham_a_score~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+m.NA <- lm(data = trait.level.redcap, hamd_sf_total~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, hamd_sf_total~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+m.NA <- lm(data = trait.level.redcap, eri_gen_total~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, eri_gen_total~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+m.NA <- lm(data = trait.level.redcap, eri_ecw_total~NA_sd_merged+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, eri_ecw_total~PA_sd_merged+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+
+m.NA <- lm(data = trait.level.redcap, NA_sd_merged~flanker_score+NA_mean_merged)
+summary(m.NA)
+vif(m.NA)
+m.PA <- lm(data = trait.level.redcap, PA_sd_merged~flanker_score+PA_mean_merged)
+summary(m.PA)
+vif(m.PA)
+```
+
+```{r Troubleshoot, eval=F, include=F, warning=F, message=F, cache=F}
 #Doing some PID cross checking. Determining what PID to use.
 EMA.test <- EMA[EMA$PID %in% demo$PID,] 
 #why is 3940 not on the regular PID for demo? It's in UIC's inactive consented list.
