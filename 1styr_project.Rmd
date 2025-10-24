@@ -12,35 +12,55 @@ output:
 
 # 1st Year Project Analyses
 
-## Load Dataset & Explore
+## Setting up dataset
 ```{r setup1, eval=T, include=FALSE, warning=F, message=F, cache=F}
 rm(list=ls());
+
+#Load Packages
 library(tidyverse);library(psych);library(lme4); library(lmerTest); library(performance); library(car) #load package
 
+#Load Data
 data.in.path <- "C:/Users/11091/OneDrive - University of Southern California/Research/CARLab/data/Mengzhe/" #path for data
 
 demo <-  read.csv(paste0(data.in.path, "demo.csv"))
-PGNG <- read.csv(paste0(data.in.path, "PGNG.csv"))
 EMA <-  read.csv(paste0(data.in.path, "CARS_pr_pst_EMA.csv"))
-flanker <- read.csv(paste0(data.in.path, "compiled-flanker-data.csv"))
-nback <-  read.csv(paste0(data.in.path, "compiled-nback-data.csv"))
-setshift <- read.csv(paste0(data.in.path, "compiled-setshift-data.csv"))
 redcap <- read.csv(paste0(data.in.path, "REDCapV1a.csv"))
+redcap.desi <- read.csv(paste0(data.in.path, "sites_merged_alldata.csv"))
+flanker <- read.csv(paste0(data.in.path, "compiled-flanker-data.csv"))
+setshift <- read.csv(paste0(data.in.path, "compiled-setshift-data.csv"))
+PGNG <- read.csv(paste0(data.in.path, "PGNG.csv"))
+nback <-  read.csv(paste0(data.in.path, "compiled-nback-data.csv"))
 
-flanker.clean <- flanker[flanker$subject_id %in% demo$PID,] # only include the PIDs that are in the demo
-nback.clean <- nback[nback$subject_id %in% demo$PID,]
-setshift.clean <- setshift[setshift$subject_id %in% demo$PID,]
-redcap.clean <- redcap[redcap$participant_id %in% demo$PID,]
-
-#Clean up EMA dataset
-unique(EMA$record_id_x)
+#Clean up PID, make it all the same format
 EMA$PID <- gsub("\\.0$", "", EMA$record_id_x)  # remove trailing ".0"
 EMA$PID <- gsub("[A-Za-z]$", "", EMA$PID)      # remove trailing letters
+redcap.desi$PID <- gsub("[A-Za-z]$", "", redcap.desi$participant_id)
+demo$PID <- as.factor(demo$PID);
+EMA$PID <- as.factor(EMA$PID);
+redcap$PID <- as.factor(redcap$participant_id);
+redcap.desi$PID <- as.factor(redcap.desi$PID);
+PGNG$PID <- as.factor(PGNG$PID);
+flanker$PID <- as.factor(flanker$subject_id);
+nback$PID <-as.factor(nback$subject_id);
+setshift$PID <-as.factor(setshift$subject_id);  
 
-# EMA.clean <- EMA[EMA$PID %in% demo$PID,]
-flanker.clean$subject_id <- as.character(flanker.clean$subject_id)
+#Only include the PIDs that are in the demo
+redcap.clean <- redcap[redcap$PID %in% demo$PID,]
+redcap.desi.clean <- redcap.desi[redcap.desi$PID %in% demo$PID,]
+flanker.clean <- flanker[flanker$PID %in% demo$PID,] 
+setshift.clean <- setshift[setshift$PID %in% demo$PID,]
+nback.clean <- nback[nback$PID %in% demo$PID,]
 
-#clean up demo dataset
+#Drop unused levels
+redcap.clean$PID <- droplevels(redcap.clean$PID)
+redcap.desi.clean$PID <- droplevels(redcap.desi.clean$PID)
+flanker.clean$PID <- droplevels(flanker.clean$PID)
+setshift.clean$PID <- droplevels(setshift.clean$PID)
+nback.clean$PID <- droplevels(nback.clean$PID)
+```
+
+```{r datastr, eval=T, include=FALSE, warning=F, message=F, cache=F}
+#clean up demo data
 demo.clean<- demo %>%
   mutate(
     Race = trimws(Race),
@@ -55,13 +75,11 @@ demo.clean<- demo %>%
       Ethnicity %in% c("Hispanic or Latinx", "Hispanic/Latino") ~ "Hispanic/Latinx",
       Ethnicity %in% c("Not Hispanic or Latinx", "Not Hispanic/Latino", "Not Hispanic/Latinx") ~ "Not Hispanic/Latinx",
       TRUE ~ Ethnicity))
-demo.clean$PID <- as.character(demo.clean$PID)
-```
 
-```{r datastr, eval=T, include=FALSE, warning=F, message=F, cache=F}
-# Make a regulation YES/NO column, and NA PA aggregation
-# Here, I am unsure whether we are counting sers_reappraisal_pst (I reminded myself that difficult feelings won't last), dec_unpleasant_pst (I could observe unpleasant feelings without being drawn into them), dec_separate_pst (I could separate myself from my thoughts and feelings) as regulation. I thought they are which is why I included them here, but they are coded differently from the rest.  
-##### JON: De-centering [not ER] dec_unpleasant_pst, dec_separate_pst; these two variables aren't part of the ER
+#sers_reappraisal_pst: I reminded myself that difficult feelings won't last [This is coded as ER]
+#dec_unpleasant_pst: I could observe unpleasant feelings without being drawn into them [This this de-centering, not coded as ER]
+#dec_separate_pst: I could separate myself from my thoughts and feelings) as regulation [This this de-centering, not coded as ER]
+#ER coding: 0-10; 0 is NA, 1 is not at all.
 EMA.clean <- EMA %>%
   mutate(
     ER_yes = if_else(
@@ -81,24 +99,33 @@ EMA.clean <- EMA %>%
                       na.rm = TRUE),
     NA_pst = rowMeans(across(c(sad_pst, frustrated_pst, angry_pst, stressed_pst, irritable_pst)),
                       na.rm = TRUE),
-    PA_pstpre = PA_pst - PA_pre,
-    NA_pstpre = NA_pst - NA_pre,
+    PA_change_raw = PA_pst - PA_pre,
+    NA_change_raw = NA_pst - NA_pre,
     perceived_success = na_if(sers_success_pst, 0),  #0 is not applicable
-    perceived_success_gmc = scale(perceived_success, center = T, scale = F) #grand-mean centering
+    perceived_success_gmc = scale(perceived_success, center = T, scale = F), #grand-mean centering
+    PA_avg = rowMeans(across(c("PA_pre", "PA_pst")), na.rm = TRUE),
+    NA_avg = rowMeans(across(c("NA_pre", "NA_pst")), na.rm = TRUE),
+    PA_gmc = scale(PA_avg, center = T, scale = F),
+    NA_gmc = scale(NA_avg, center = T, scale = F),
   ) %>%
   group_by(PID) %>%
   mutate(
-    perceived_success_pm = mean(perceived_success,na.rm=TRUE), #person-mean
-    perceived_success_w = perceived_success - perceived_success_pm, #person-mean deviation: within-person variation
+    perceived_success_w = perceived_success - mean(perceived_success,na.rm=TRUE), #person-mean deviation: within-person variation
     perceived_success_b = perceived_success_gmc - perceived_success_w,
     PA_pre_w = PA_pre - mean(PA_pre,na.rm=TRUE),
-    NA_pre_w = NA_pre - mean(NA_pre,na.rm=TRUE)
+    NA_pre_w = NA_pre - mean(NA_pre,na.rm=TRUE),
+    PA_w = PA_avg - mean(PA_avg,na.rm=TRUE),
+    NA_w = NA_avg - mean(NA_avg,na.rm=TRUE),
+    PA_b = PA_gmc - PA_w,
+    NA_b = NA_gmc - NA_w
   ) %>%
   ungroup()
-table(EMA.clean$ER_yes) #regulated around 48% of time
-table(EMA.clean$pst_complete) #Remember to only include the ones that completed post
-describe(EMA.clean$perceived_success)
-EMA.clean[,c("PID","PA_pre","NA_pre","PA_pst","NA_pst","PA_pstpre","NA_pstpre")]
+
+#Participants regulated around 48% of the prompts
+table(EMA.clean$ER_yes)
+prop.table(table(EMA.clean$ER_yes))
+#There are 1851 post survey prompts that are completed
+table(EMA.clean$pst_complete)
 
 #Affect variability
 affect_sd <- EMA.clean %>%
@@ -119,11 +146,12 @@ affect_sd <- EMA.clean %>%
     .groups = "drop"
   )
 
-#Filtering out only the ones with pst data and indicated regulation
-EMA.clean.ER <- EMA.clean %>%
-  filter(ER_yes == 1, pst_complete == 2)
+#Create a data set where participants indicated regulation
+EMA.ERonly <- EMA.clean %>%
+  filter(ER_yes == 1)
 
-#Over here, it only accounts for the prompts that have regulation! #Hmm, should I compare it to those that didn't report regulation?
+#####START CLEANING FROM HERE#####
+#Over here, it only accounts for the prompts that have regulation!
 EMA.clean.ER.mean <- EMA.clean.ER %>%
   group_by(PID) %>%
   summarise(
