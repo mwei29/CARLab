@@ -392,10 +392,16 @@ summary(m.PA.SS.fluctuation.ER) #When ER is initiated, people with greater cogni
 m.NA.SS.fluctuation.ER<- lmer(NA_pst ~ NA_pre_w * shift_gmc + Group+ (1 + NA_pre_w|PID), data = EMA.ERonly)
 summary(m.NA.SS.fluctuation.ER) 
 
-m.PA.SS.fluctuation.all<- lmer(PA_pst ~ PA_pre_w * shift_gmc * ER_yes + Group+ (1 + PA_pre_w|PID), data = EMA.all)
+m.PA.SS.fluctuation.all<- lmer(PA_pst ~ PA_pre_w * ER_yes * shift_gmc  + Group+ (1 + PA_pre_w|PID), data = EMA.all)
 summary(m.PA.SS.fluctuation.all) 
-m.NA.SS.fluctuation.all<- lmer(NA_pst ~ NA_pre_w * shift_gmc * ER_yes + Group+ (1 + NA_pre_w|PID), data = EMA.all)
+m.NA.SS.fluctuation.all<- lmer(NA_pst ~ NA_pre_w * ER_yes * shift_gmc  + Group+ (1 + NA_pre_w|PID), data = EMA.all)
 summary(m.NA.SS.fluctuation.all) 
+
+controlPA<- lmer(PA_pst ~ ER_yes*shift_gmc + PA_pre_w  + Group+ (1 + PA_pre_w|PID), data = EMA.all)
+summary(controlPA) 
+controlNA<- lmer(NA_pst ~ ER_yes*shift_gmc + NA_pre_w + Group+ (1 + NA_pre_w|PID), data = EMA.all)
+summary(controlNA) 
+
 #check demo just for this analysis
 unique(m.PA.SS.fluctuation.all@frame$PID)
 m.PA.SS.fluctuation.all@frame %>%
@@ -408,45 +414,45 @@ m.NA.SS.fluctuation.noER<- lmer(NA_pst ~ NA_pre_w * shift_gmc + Group+ (1 + NA_p
 summary(m.NA.SS.fluctuation.noER) 
 
 sd_shift <- sd(trait.level$shift_gmc, na.rm = TRUE)
-shift_lvls <- c("Low set shift (-1 SD)", "Mean set shift", "High set shift (+1 SD)")
-cols3 <- setNames(piratepal("pony")[c(1,5,8)], shift_lvls)
-ef <- effects::effect("PA_pre_w*shift_gmc*ER_yes", 
+shift_lvls <- c("Low set shift (-1 SD)", "High set shift (+1 SD)")
+ER_lvls <- c("No Regulation", "Regulation")
+cols2 <- setNames(piratepal("pony")[c(1,8)], ER_lvls)
+ef <- effects::effect("PA_pre_w*ER_yes*shift_gmc", 
              mod = m.PA.SS.fluctuation.all, 
-             xlevels = list(shift_gmc = c(-sd_shift, 0, sd_shift),
+             xlevels = list(shift_gmc = c(-sd_shift, sd_shift),
                                      ER_yes = c(0, 1)))
 efdata <- as.data.frame(ef)
-efdata$ER_yes <- factor(efdata$ER_yes, levels = c(0,1), labels = c("No Regulation", "Regulation"))
-efdata$shift_gmc <-  factor(efdata$shift_gmc, levels = c(-sd_shift, 0, sd_shift), labels = shift_lvls)
-fig1<- ggplot(efdata, aes(x = PA_pre_w, y = fit, color = shift_gmc, group = shift_gmc)) + 
-  geom_line(size = 1.2) +
-  geom_ribbon(aes(ymin = fit - se, ymax = fit + se, fill = shift_gmc), alpha = 0.3) + 
-  facet_wrap(~ ER_yes) +
-  scale_color_manual(values = cols3, breaks = shift_lvls, drop = FALSE,
+efdata$ER_yes <- factor(efdata$ER_yes, levels = c(0,1), labels = ER_lvls)
+efdata$shift_gmc <-  factor(efdata$shift_gmc, levels = c(-sd_shift, sd_shift), labels = shift_lvls)
+fig1<- ggplot(efdata, aes(x = PA_pre_w, y = fit, color = ER_yes, group = ER_yes)) + 
+  geom_line(linewidth = 1.2) +
+  geom_ribbon(aes(ymin = fit - se, ymax = fit + se, fill = ER_yes), alpha = 0.3) + 
+  facet_wrap(~ shift_gmc) +
+  scale_color_manual(values = cols2, breaks = ER_lvls, drop = FALSE,
                      aesthetics = c("colour","fill")) +
-  labs(x = "PA_pre_w", y = "PA_post", color = "Set shift score", fill = "Set shift score") +
+  labs(x = "PA_pre_w", y = "PA_post", color = "Emotion Regulation", fill = "Emotion Regulation") +
   theme_classic() +
   theme(panel.spacing = unit(3, "lines"))
 
-ef <- effects::effect("NA_pre_w*shift_gmc*ER_yes", 
+ef <- effects::effect("NA_pre_w*ER_yes*shift_gmc", 
              mod = m.NA.SS.fluctuation.all, 
-             xlevels = list(shift_gmc = c(-sd_shift, 0, sd_shift),
+             xlevels = list(shift_gmc = c(-sd_shift, sd_shift),
                                      ER_yes = c(0, 1)))
 efdata <- as.data.frame(ef)
-efdata$ER_yes <- factor(efdata$ER_yes, levels = c(0,1), labels = c("No Regulation", "Regulation"))
-efdata$shift_gmc <-  factor(efdata$shift_gmc, levels = c(-sd_shift, 0, sd_shift), labels = shift_lvls)
-fig2 <- ggplot(efdata, aes(x = NA_pre_w, y = fit, color = shift_gmc, group = shift_gmc)) + 
-  geom_line(size = 1.2) +
-  geom_ribbon(aes(ymin = fit - se, ymax = fit + se, fill = shift_gmc), alpha = 0.3) + 
-  facet_wrap(~ ER_yes) +
-  scale_color_manual(values = cols3, breaks = shift_lvls, drop = FALSE,
+efdata$ER_yes <- factor(efdata$ER_yes, levels = c(0,1), labels = ER_lvls)
+efdata$shift_gmc <-  factor(efdata$shift_gmc, levels = c(-sd_shift, sd_shift), labels = shift_lvls)
+fig2<- ggplot(efdata, aes(x = NA_pre_w, y = fit, color = ER_yes, group = ER_yes)) + 
+  geom_line(linewidth = 1.2) +
+  geom_ribbon(aes(ymin = fit - se, ymax = fit + se, fill = ER_yes), alpha = 0.3) + 
+  facet_wrap(~ shift_gmc) +
+  scale_color_manual(values = cols2, breaks = ER_lvls, drop = FALSE,
                      aesthetics = c("colour","fill")) +
-  labs(x = "NA_pre_w", y = "NA_post", color = "Set shift score", fill = "Set shift score") +
+  labs(x = "NA_pre_w", y = "NA_post", color = "Emotion Regulation", fill = "Emotion Regulation") +
   theme_classic() +
   theme(panel.spacing = unit(3, "lines"))
-
-
 
 fig1;fig2
+
 #Nback
 m.PA.SS.fluctuation<- lmer(PA_pst ~ PA_pre_w * nback_gmc + Group + (1 + PA_pre_w|PID), data = EMA.ERonly)
 summary(m.PA.SS.fluctuation) 
